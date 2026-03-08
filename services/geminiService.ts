@@ -1,301 +1,208 @@
-import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
 
-const API_KEY = process.env.API_KEY;
+import { GoogleGenAI, Type } from "@google/genai";
+import { Message, NormalizedEntity, InsightData } from "../types";
 
-if (!API_KEY) {
-  throw new Error("API_KEY environment variable not set");
+// Fixed: Initializing GoogleGenAI directly with process.env.API_KEY as per guidelines.
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+
+const KNOWN_ENTITIES = [
+    "Cameron Doyle Church",
+    "Judge Barry L. Breslow",
+    "Aziz Merchant",
+    "Galen Carrico",
+    "Sydney Hutt",
+    "Cooper Brinson",
+    "Verness",
+    "DeGayner",
+    "Mr. McGinnis",
+    "Marilyn Church",
+    "Zach Yerington",
+    "Judge Walker"
+];
+
+const getMimeTypeFromFileName = (fileName: string): string | null => {
+    const extension = fileName.split('.').pop()?.toLowerCase();
+    const mimeMap: { [key: string]: string } = {
+        'mp3': 'audio/mp3', 'wav': 'audio/wav', 'mp4': 'video/mp4', 'mov': 'video/mov',
+        'webm': 'video/webm', 'm4a': 'audio/mp4', 'flac': 'audio/flac'
+    };
+    return mimeMap[extension || ''] || null;
 }
-
-const ai = new GoogleGenAI({ apiKey: API_KEY });
 
 const blobToBase64 = (blob: Blob): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onloadend = () => {
-      const base64data = reader.result as string;
-      // remove the data url prefix
-      resolve(base64data.substring(base64data.indexOf(',') + 1));
+      if (typeof reader.result === 'string') {
+        resolve(reader.result.split(',')[1]);
+      } else reject(new Error("File conversion failed"));
     };
-    reader.onerror = (error) => {
-      reject(error);
-    };
+    reader.onerror = reject;
     reader.readAsDataURL(blob);
   });
 };
 
-const handleApiError = (error: unknown, context: string): never => {
-    console.error(`Error during Gemini API call while ${context}:`, error);
-    if (error instanceof Error) {
-        if(error.message.includes('SAFETY')) {
-            throw new Error(`The request was blocked due to safety settings. The provided content may not be appropriate.`);
-        }
-        throw new Error(error.message || `An unknown API error occurred while ${context}.`);
-    }
-    throw new Error(`An unexpected non-API error occurred during ${context}.`);
-}
-
-export const correctTranscription = async (
-  originalTranscript: string,
-  corrections: { find: string; replace: string }[]
-): Promise<string> => {
-  try {
-    const correctionInstructions = corrections
-      .map(c => `- Find all instances of "${c.find}" and replace them with "${c.replace}".`)
-      .join('\n');
-
-    const textPart = {
-      text: `You are an AI legal transcript editor. Your task is to apply a series of corrections to the provided transcript with absolute precision.
-
-**Instructions:**
-1.  Review the full transcript provided below.
-2.  Apply the following corrections consistently throughout the entire document.
-3.  Maintain all original formatting, including speaker labels (e.g., \`**Speaker 1:**\`), timestamps (e.g., \`[00:14]\`), and non-speech sounds (e.g., \`[gavel bangs]\`).
-4.  Only change the specified text. Do not add, remove, or alter any other part of the transcript.
-5.  Your output must be the complete, corrected transcript.
-
-**Corrections to Apply:**
-${correctionInstructions}
-
----
-**ORIGINAL TRANSCRIPT:**
----
-${originalTranscript}
----
-
-Now, provide the full transcript with the corrections applied.
-`,
-    };
-
-    const response: GenerateContentResponse = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: { parts: [textPart] },
-      config: {
-        temperature: 0.0, // Set to 0 for maximum determinism and precision
-      },
-    });
-
-    const correctedTranscript = response.text;
-    if (!correctedTranscript) {
-        throw new Error("The model did not return a corrected transcript.");
-    }
-
-    return correctedTranscript;
-  } catch(error) {
-    handleApiError(error, 'correcting transcript');
-  }
-};
-
-
-export const refineTranscriptionSegment = async (
-  audioBlob: Blob,
-  segmentToRefine: string,
-  fullTranscript: string
-): Promise<string> => {
-  try {
-    const audioData = await blobToBase64(audioBlob);
-
-    const audioPart = {
-      inlineData: {
-        mimeType: audioBlob.type,
-        data: audioData,
-      },
-    };
-    
-    const textPart = {
-      text: `You are an AI transcription refinement expert. Your task is to correct a specific segment of a transcript using the provided audio.
-        
-You will receive:
-1. The full audio file.
-2. The full existing transcript for context (speaker roles, topic, etc.).
-3. The specific, potentially incorrect text segment that needs to be refined.
-
-Your instructions are:
-- Listen carefully to the part of the audio that corresponds to the provided text segment.
-- Re-transcribe ONLY that segment with the highest possible accuracy.
-- Maintain the original speaker labeling format if present (e.g., "**Speaker 1:**").
-- Do not change any part of the transcript outside of the provided segment.
-- Your output should be ONLY the corrected text for the segment, ready to replace the original segment.
-
----
-FULL TRANSCRIPT CONTEXT:
----
-${fullTranscript}
----
-TEXT SEGMENT TO REFINE:
----
-${segmentToRefine}
----
-
-Now, analyze the audio and provide the corrected transcription for the segment above.`,
-    };
-
-    const response: GenerateContentResponse = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: { parts: [textPart, audioPart] },
-      config: {
-        temperature: 0.1,
-      },
-    });
-
-    const refinedSegment = response.text;
-    if (!refinedSegment) {
-        throw new Error("The model did not return a refined segment.");
-    }
-
-    return refinedSegment;
-  } catch(error) {
-    handleApiError(error, 'refining segment');
-  }
-}
-
 export const transcribeAudio = async (
-  audioBlob: Blob,
+  mediaBlob: Blob,
+  fileName: string,
   onProgress: (progress: { value: number; message: string }) => void
 ): Promise<string> => {
-  let progressInterval: number | null = null;
   try {
-    onProgress({ value: 10, message: 'Encoding audio file...' });
-    const audioData = await blobToBase64(audioBlob);
+    onProgress({ value: 10, message: 'Encoding media file...' });
+    const mediaData = await blobToBase64(mediaBlob);
+    const mimeType = mediaBlob.type || getMimeTypeFromFileName(fileName) || 'audio/webm';
     
-    onProgress({ value: 30, message: 'Uploading audio to Gemini...' });
+    onProgress({ value: 30, message: 'Uploading to Forensic Engine...' });
 
-    // Simulate progress for the API call duration, as it's a black box.
-    let progress = 30;
-    progressInterval = window.setInterval(() => {
-        const increment = (95 - progress) / 20; // Slowly approach 95%
-        progress += increment;
-        if (progress <= 95) {
-            onProgress({ value: progress, message: 'AI is processing the audio... please wait.' });
-        } else {
-            if (progressInterval) clearInterval(progressInterval);
-        }
-    }, 1000);
-
-    const audioPart = {
-      inlineData: {
-        mimeType: audioBlob.type,
-        data: audioData,
+    // Fixed: Using ai.models.generateContent with model name and prompt directly.
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-pro-preview',
+      contents: {
+        role: 'user',
+        parts: [
+          { inlineData: { mimeType, data: mediaData } },
+          { text: `You are an evidence-grade forensic transcription analyst. Produce a verbatim record of this legal proceeding.
+RULES:
+1. Verbatim Accuracy: Every word, including filler words.
+2. Timestamps: Insert [MM:SS] at the start of every speaker turn.
+3. Diarization: identify speakers by role (Judge, Prosecution, Defense, Witness) or Name if known (${KNOWN_ENTITIES.join(', ')}).
+4. No Hallucinations: Mark unclear parts as [INAUDIBLE @ timestamp].
+5. Format labels as Markdown bold: **Judge:**.` }
+        ]
       },
-    };
-
-    const textPart = {
-      text: `You are a world-class AI system specialized in verbatim legal and court transcription. Your task is to transcribe the provided audio with forensic-level accuracy. You must adhere to the following strict guidelines:
-
-1.  **Strict Verbatim**: Transcribe every single utterance exactly as spoken. This includes all filler words ("um," "uh," "like," "you know"), false starts, stutters, and repetitions. Do NOT correct grammar, colloquialisms, or mispronunciations. The transcript must be a perfect mirror of the spoken audio.
-
-2.  **Speaker Identification & Naming**:
-    *   Actively listen for speakers identifying themselves or others by name (e.g., "My name is Jane Doe," "This is Attorney Smith," "Thank you, Mr. Johnson").
-    *   If a speaker's name is identified, use that name consistently for all their subsequent lines (e.g., "**Jane Doe:**", "**Attorney Smith:**").
-    *   If names are not available, clearly identify and label each new speaker on a new line using the format "**Speaker [Number]:**" (e.g., "**Speaker 1:**", "**Speaker 2:**").
-    *   If you can confidently identify a speaker's role from context (e.g., "Judge", "Plaintiff's Attorney"), use that role consistently instead of a number, but prefer a real name if available.
-    *   Maintain absolute consistency with speaker labels throughout the entire transcript.
-
-3.  **Punctuation**: Use punctuation to reflect the speaker's natural cadence, pauses, and intonation.
-    *   Use commas for short pauses.
-    *   Use periods for sentence ends or longer pauses.
-    *   Use ellipses (...) to indicate a speaker trailing off.
-    *   Use question marks and exclamation points only when clearly warranted by the speaker's tone.
-
-4.  **Non-Speech Sounds**: Note all significant non-speech sounds in brackets. Be precise.
-    *   Examples: "[papers shuffling]", "[gavel bangs]", "[door closes]", "[witness crying]", "[phone rings]".
-    *   Use "[crosstalk]" when multiple speakers talk over each other, making transcription impossible for that segment.
-    *   Use "[inaudible]" for any word or phrase that is impossible to understand. Do not guess.
-    *   Use "[mumbled]" for speech that is unclear but still discernible.
-
-5.  **Timestamping**: Begin each speaker line or significant non-speech sound with a precise timestamp in [MM:SS] format (e.g., "[00:14] **Jane Doe:** ...", "[01:32] [gavel bangs]"). For longer audio, use [HH:MM:SS].
-
-6.  **Legal & Technical Terms**: Pay extreme attention to legal terminology, case names, statutes, citations, and proper nouns. Spell them with the highest possible accuracy.
-
-The integrity of legal proceedings depends on the precision of this transcript. There is no room for error, summarization, or paraphrasing. Provide only the verbatim transcript.`,
-    };
-
-    const response: GenerateContentResponse = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: { parts: [textPart, audioPart] },
-      config: {
-        temperature: 0.1, // Lower temperature for more deterministic, factual output
-      },
+      config: { temperature: 0 }
     });
     
-    if (progressInterval) clearInterval(progressInterval);
-    onProgress({ value: 98, message: 'Receiving transcription...' });
-
-    const transcription = response.text;
-    
-    if (!transcription) {
-        throw new Error("The model did not return a transcription. The audio may be silent or unclear.");
-    }
-    
-    return transcription;
+    return response.text || "";
   } catch (error) {
-    if (progressInterval) clearInterval(progressInterval);
-    handleApiError(error, 'transcribing');
+    console.error("Transcription Error:", error);
+    throw error;
   }
 };
 
-export const summarizeText = async (textToSummarize: string): Promise<string> => {
-    try {
-        const response: GenerateContentResponse = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: `You are an expert legal AI assistant. Your task is to analyze the following court or legal transcript and generate a detailed, structured summary formatted as a professional case brief. The summary must be objective, neutral, and meticulously organized. Use the following headings and provide comprehensive details for each:
-
-**1. Case/Matter Title:** (If discernible from the text, e.g., "Hearing in the matter of State v. John Doe")
-**2. Key Individuals and Roles:** List all significant speakers identified in the transcript and their roles (e.g., Judge, Plaintiff, Defendant, Witness, Attorney for Plaintiff).
-**3. Statement of Facts:** Present a neutral, chronological summary of the key facts, events, and evidence discussed in the transcript.
-**4. Procedural History:** (If applicable) Describe the legal context and any prior proceedings mentioned.
-**5. Legal Issues Presented:** Clearly articulate the central legal questions, disputes, or points of law being debated or ruled upon.
-**6. Arguments of the Parties:** Systematically summarize the primary arguments, claims, and defenses presented by each side.
-**7. Rulings/Decisions of the Court:** (If applicable) State any rulings, orders, or decisions made by the judge during the proceeding.
-**8. Conclusion/Outcome:** Briefly state the outcome of the proceeding as reflected in the transcript (e.g., "Motion denied," "Case proceeding to trial," "Settlement discussed").
-
----
-TRANSCRIPT:
----
-${textToSummarize}`
-        });
-        
-        const summary = response.text;
-        
-        if (!summary) {
-            throw new Error("The model did not return a summary.");
+export const generateInsights = async (text: string): Promise<InsightData> => {
+  const response = await ai.models.generateContent({
+    model: 'gemini-3-flash-preview',
+    contents: `Analyze this court transcript and output structured JSON data for a legal dashboard.
+Transcript:
+${text}`,
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          metrics: {
+            type: Type.OBJECT,
+            properties: {
+              constitutionalRisk: { type: Type.NUMBER, description: 'Score 0-100' },
+              proceduralIntegrity: { type: Type.NUMBER, description: 'Score 0-100' },
+              tensionLevel: { type: Type.NUMBER, description: 'Score 0-100' }
+            }
+          },
+          timeline: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                timestamp: { type: Type.STRING },
+                description: { type: Type.STRING },
+                type: { type: Type.STRING, enum: ['ruling', 'objection', 'argument', 'procedure'] }
+              }
+            }
+          }
         }
-        
-        return summary;
-    } catch (error) {
-        handleApiError(error, 'summarizing');
+      }
     }
+  });
+  return JSON.parse(response.text || "{}");
 }
 
-export const analyzeLegalText = async (textToAnalyze: string): Promise<string> => {
-    try {
-        const response: GenerateContentResponse = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: `You are an expert AI legal analyst. Your task is to perform a rigorous analysis of the following legal transcript. Your response must be structured, thorough, and neutral. Use the following sections:
+export const summarizeText = async (text: string): Promise<string> => {
+  const response = await ai.models.generateContent({
+    model: 'gemini-3-pro-preview',
+    contents: `You are an evidence-grade audio transcription analyst. Produce a clean, court-ready record summary.
+Instructions:
+1. Executive Summary with timestamps.
+2. Key Moments Timeline.
+3. Decisions, Orders, and Rulings.
+4. Copy/Paste Exhibit Blurb (Neutral Tone).
+Transcript:
+${text}`
+  });
+  return response.text || "";
+}
 
-1.  **Primary Legal Issues**: Identify and articulate the core legal questions or principles at the heart of the discussion (e.g., "admissibility of hearsay evidence," "standard for summary judgment").
+export const analyzeLegalText = async (text: string): Promise<string> => {
+  const response = await ai.models.generateContent({
+    model: 'gemini-3-pro-preview',
+    contents: `ROLE: Forensic Legal Analyst.
+TASK: Reconstruct what actually happened. Identify potential constitutional violations, check for pretext or retaliation, and flag structural problems.
+Narratives: Generate two competing narratives (Court's Likely Framing vs Accountability Framing).
+Transcript:
+${text}`
+  });
+  return response.text || "";
+}
 
-2.  **Summary of Competing Arguments**: Provide a balanced summary of the main arguments advanced by each party concerning the legal issues.
+export const chatAboutTranscript = async (transcript: string, history: Message[]): Promise<string> => {
+  const chat = ai.chats.create({
+    model: 'gemini-3-pro-preview',
+    config: { systemInstruction: "Answer questions based only on the content of the provided legal transcript." }
+  });
+  const response = await chat.sendMessage({ message: `Context:\n${transcript}\n\nUser Question: ${history[history.length - 1].text}` });
+  return response.text || "";
+}
 
-3.  **Relevant Legal Precedent**: Identify any statutes, case law, or significant legal precedents that are either explicitly mentioned or are directly relevant to the arguments. For each, briefly explain its relevance.
-
-4.  **Analysis of Arguments**: Provide a neutral, objective analysis of the legal arguments presented. Evaluate their strengths and weaknesses based on established doctrine and precedent. Avoid taking a side.
-
-**IMPORTANT DISCLAIMER**: This analysis is an AI-generated educational tool for informational purposes only and does not constitute legal advice. It is not a substitute for counsel from a qualified attorney licensed to practice in the relevant jurisdiction. Always consult with a qualified attorney for legal matters.
-
----
-TEXT FOR ANALYSIS:
----
-${textToAnalyze}`
-        });
-
-        const analysis = response.text;
-        
-        if (!analysis) {
-            throw new Error("The model did not return a legal analysis.");
+export const extractEntities = async (text: string): Promise<NormalizedEntity[]> => {
+  const response = await ai.models.generateContent({
+    model: 'gemini-3-flash-preview',
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            category: { type: Type.STRING },
+            items: { type: Type.ARRAY, items: { type: Type.STRING } }
+          }
         }
-        
-        return analysis;
-    } catch (error) {
-        handleApiError(error, 'analyzing legal text');
-    }
+      }
+    },
+    contents: `Extract unique legal entities from this transcript: People, Organizations, Locations, Statutes/Rules, Exhibits.
+Transcript:
+${text}`
+  });
+  return JSON.parse(response.text || "[]");
+}
+
+export const correctTranscription = async (text: string, corrections: { find: string; replace: string }[]): Promise<string> => {
+    const instr = corrections.map(c => `- Replace "${c.find}" with "${c.replace}"`).join('\n');
+    const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: `Apply these text corrections to the transcript while maintaining all timestamps and formatting:
+${instr}
+
+Transcript:
+${text}`
+    });
+    return response.text || text;
+}
+
+export const refineTranscriptionSegment = async (blob: Blob, name: string, segment: string, full: string): Promise<string> => {
+    const data = await blobToBase64(blob);
+    const mime = blob.type || getMimeTypeFromFileName(name) || 'audio/webm';
+    const response = await ai.models.generateContent({
+        model: 'gemini-3-pro-preview',
+        contents: {
+            role: 'user',
+            parts: [
+                { inlineData: { mimeType: mime, data } },
+                { text: `Refine this specific segment for verbatim accuracy.
+Segment to Refine: "${segment}"
+Full context: "${full}"` }
+            ]
+        }
+    });
+    return response.text || segment;
 }

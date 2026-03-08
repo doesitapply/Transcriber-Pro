@@ -1,6 +1,7 @@
 {
   "requestFramePermissions": [
-    "microphone"
+    "microphone",
+    "camera"
   ],
   "name": "Gemini Audio Transcriber",
   "description": ""

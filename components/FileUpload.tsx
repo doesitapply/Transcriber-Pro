@@ -1,5 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
-import { UploadIcon } from './Icons';
+import React, { useRef, useState } from 'react';
 
 interface FileUploadProps {
     onFileSelect: (file: File) => void;
@@ -7,28 +6,9 @@ interface FileUploadProps {
 }
 
 export const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, disabled }) => {
-    const [dragActive, setDragActive] = useState(false);
     const inputRef = useRef<HTMLInputElement>(null);
+    const [isDragging, setIsDragging] = useState(false);
 
-    const handleDrag = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (e.type === "dragenter" || e.type === "dragover") {
-            setDragActive(true);
-        } else if (e.type === "dragleave") {
-            setDragActive(false);
-        }
-    }, []);
-
-    const handleDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setDragActive(false);
-        if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-            onFileSelect(e.dataTransfer.files[0]);
-        }
-    }, [onFileSelect]);
-    
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         e.preventDefault();
         if (e.target.files && e.target.files[0]) {
@@ -40,14 +20,39 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, disabled }
         inputRef.current?.click();
     };
 
+    const handleDragOver = (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!disabled) {
+            setIsDragging(true);
+        }
+    };
+
+    const handleDragLeave = (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragging(false);
+    };
+
+    const handleDrop = (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragging(false);
+        if (disabled) return;
+
+        const files = e.dataTransfer.files;
+        if (files && files.length > 0) {
+            const file = files[0];
+            if (file.type.startsWith('audio/') || file.type.startsWith('video/')) {
+                onFileSelect(file);
+            } else {
+                alert("Please upload a supported audio or video file.");
+            }
+        }
+    };
+
     return (
-        <div 
-            className="w-full flex flex-col items-center justify-center gap-6"
-            onDragEnter={handleDrag}
-            onDragLeave={handleDrag}
-            onDragOver={handleDrag}
-            onDrop={handleDrop}
-        >
+        <div className="w-full">
             <input
                 ref={inputRef}
                 type="file"
@@ -57,16 +62,31 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, disabled }
                 disabled={disabled}
             />
             <div
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
                 onClick={onButtonClick}
-                className={`w-full max-w-md h-48 border-2 border-dashed rounded-xl flex flex-col justify-center items-center text-center p-4 cursor-pointer transition-colors duration-300 ${dragActive ? 'border-brand-primary bg-neutral-700' : 'border-neutral-600 hover:border-brand-primary hover:bg-neutral-700'}`}
+                className={`
+                    relative w-full h-40 rounded-xl border-2 border-dashed flex flex-col items-center justify-center cursor-pointer transition-all duration-200
+                    ${isDragging 
+                        ? 'border-brand-secondary bg-brand-secondary/10 scale-[1.02]' 
+                        : 'border-neutral-600 bg-neutral-700/30 hover:border-brand-secondary/50 hover:bg-neutral-700/50'
+                    }
+                    ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
+                `}
             >
-                <UploadIcon className="w-10 h-10 text-neutral-400 mb-2"/>
-                <p className="text-lg text-neutral-300">
-                    Drag & drop an audio or video file
+                <div className={`p-3 rounded-full mb-3 transition-colors ${isDragging ? 'bg-brand-secondary/20' : 'bg-neutral-700'}`}>
+                    <svg className={`w-8 h-8 ${isDragging ? 'text-brand-secondary' : 'text-neutral-400'}`} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+                    </svg>
+                </div>
+                <p className="text-sm font-medium text-neutral-200">
+                    {isDragging ? "Drop file to upload" : "Click or drag file here"}
                 </p>
-                <p className="text-neutral-500">or click to browse</p>
+                <p className="text-xs text-neutral-500 mt-2">
+                    Supports MP3, WAV, MP4, MOV
+                </p>
             </div>
-             <p className="text-sm text-neutral-500 max-w-sm">Your file is processed securely and is not stored after transcription.</p>
         </div>
     );
 };

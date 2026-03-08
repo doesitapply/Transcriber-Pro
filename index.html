@@ -1,24 +1,46 @@
+
 <!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Gemini Court Audio Transcriber</title>
+    <title>Gemini Legal Intelligence Copilot</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
         theme: {
           extend: {
+            fontFamily: {
+              sans: ['"Plus Jakarta Sans"', 'sans-serif'],
+              mono: ['"JetBrains Mono"', 'monospace'],
+            },
             colors: {
-              'brand-primary': '#4285F4',
-              'brand-secondary': '#34A853',
-              'brand-accent': '#FBBC05',
-              'brand-danger': '#EA4335',
-              'neutral-900': '#121212',
-              'neutral-800': '#1E1E1E',
-              'neutral-700': '#2C2C2C',
-              'neutral-200': '#E0E0E0',
-              'neutral-100': '#F5F5F5',
+              'brand-primary': '#6366f1', // Indigo 500
+              'brand-secondary': '#10b981', // Emerald 500
+              'brand-dark': '#0f172a', // Slate 900
+              'glass': 'rgba(255, 255, 255, 0.05)',
+              'glass-border': 'rgba(255, 255, 255, 0.1)',
+            },
+            backgroundImage: {
+               'cyber-grid': 'linear-gradient(to right, #1f2937 1px, transparent 1px), linear-gradient(to bottom, #1f2937 1px, transparent 1px)',
+               'radial-glow': 'radial-gradient(circle at center, rgba(99, 102, 241, 0.15) 0%, transparent 70%)',
+            },
+            keyframes: {
+              'fade-in': {
+                '0%': { opacity: '0', transform: 'translateY(10px)' },
+                '100%': { opacity: '1', transform: 'translateY(0)' },
+              },
+              'slide-in-right': {
+                '0%': { transform: 'translateX(20px)', opacity: '0' },
+                '100%': { transform: 'translateX(0)', opacity: '1' },
+              }
+            },
+            animation: {
+              'fade-in': 'fade-in 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards',
+              'slide-in-right': 'slide-in-right 0.5s ease-out forwards',
             }
           }
         }
@@ -34,9 +56,35 @@
   }
 }
 </script>
+<style>
+    /* Custom Scrollbar for a cleaner look */
+    ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+        background: rgba(0, 0, 0, 0.1);
+    }
+    ::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+        background: rgba(255, 255, 255, 0.2);
+    }
+    
+    body {
+        background-color: #030712; /* Very dark slate */
+        background-image: 
+            radial-gradient(circle at 15% 50%, rgba(99, 102, 241, 0.08), transparent 25%), 
+            radial-gradient(circle at 85% 30%, rgba(16, 185, 129, 0.08), transparent 25%);
+        background-attachment: fixed;
+    }
+</style>
+<link rel="stylesheet" href="/index.css">
 </head>
-  <body class="bg-neutral-900 text-neutral-100 font-sans">
-    <div id="root" class="h-screen w-screen"></div>
+  <body class="text-neutral-100 font-sans antialiased overflow-hidden">
+    <div id="root" class="h-screen w-screen flex flex-col"></div>
     <script type="module" src="/index.tsx"></script>
   </body>
 </html>
